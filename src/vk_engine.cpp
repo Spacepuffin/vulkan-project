@@ -303,14 +303,51 @@ void VulkanEngine::init_pipelines() {
 	//build the triangle2 pipeline
 	_triangle2Pipeline = pipelineBuilder.build_pipeline(_device, _renderPass);
 
+	//build the mesh pipeline
+	VertexInputDescription vertexDescription = Vertex::get_vertex_description();
+
+	//connect the pipeline builder vertex input info to the one we get from Vertex
+	pipelineBuilder._vertexInputInfo.pVertexAttributeDescriptions = vertexDescription.attributes.data();
+	pipelineBuilder._vertexInputInfo.vertexAttributeDescriptionCount = vertexDescription.attributes.size();
+
+	pipelineBuilder._vertexInputInfo.pVertexBindingDescriptions = vertexDescription.bindings.data();
+	pipelineBuilder._vertexInputInfo.vertexBindingDescriptionCount = vertexDescription.bindings.size();
+
+	//clear the shader stages for the builder
+	pipelineBuilder._shaderStages.clear();
+
+	//compile mesh vertex shader
+
+	VkShaderModule meshVertShader;
+	if (!load_shader_module("../../shaders/tri_mesh.vert.spv", &meshVertShader))
+	{
+		std::cout << "Error when building the triangle vertex shader module" << std::endl;
+	}
+	else {
+		std::cout << "Red Triangle vertex shader successfully loaded" << std::endl;
+	}
+
+	//add the other shaders
+	pipelineBuilder._shaderStages.push_back(
+		vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, meshVertShader));
+
+	//make sure that triangleFragShader is holding the compiled colored_triangle.frag
+	pipelineBuilder._shaderStages.push_back(
+		vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, triangleFragShader));
+
+	//build the mesh triangle pipeline
+	_meshPipeline = pipelineBuilder.build_pipeline(_device, _renderPass);
+
 	//destroy all shader modules, outside of the queue
+	vkDestroyShaderModule(_device, meshVertShader, nullptr);
 	vkDestroyShaderModule(_device, triangle2VertexShader, nullptr);
 	vkDestroyShaderModule(_device, triangle2FragShader, nullptr);
 	vkDestroyShaderModule(_device, triangleFragShader, nullptr);
 	vkDestroyShaderModule(_device, triangleVertexShader, nullptr);
 
 	_mainDeletionQueue.push_function([=]() {
-		//destroy the 2 pipelines we have created
+		//destroy the 3 pipelines we have created
+		vkDestroyPipeline(_device, _meshPipeline, nullptr);
 		vkDestroyPipeline(_device, _triangle2Pipeline, nullptr);
 		vkDestroyPipeline(_device, _trianglePipeline, nullptr);
 
@@ -406,16 +443,15 @@ void VulkanEngine::draw()
 	//// RENDER PASS BLOCK
 	vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-	if (_selectedShader == 0) {
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
-	} else {
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _triangle2Pipeline);
-	}
-	
-	vkCmdDraw(cmd, 3, 1, 0, 0);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
+	VkDeviceSize offset = 0;
+
+	vkCmdBindVertexBuffers(cmd, 0, 1, &_triangleMesh._vertexBuffer._buffer, &offset);
+	vkCmdDraw(cmd, _triangleMesh._vertices.size(), 1, 0, 0);
 
 	vkCmdEndRenderPass(cmd);
 	VK_CHECK(vkEndCommandBuffer(cmd));
+	//// END RENDER PASS BLOCK
 
 	// Submit to GPU
 	VkSubmitInfo submit = {};
@@ -469,9 +505,6 @@ void VulkanEngine::run()
 			if (e.type == SDL_QUIT) bQuit = true;
 			else if (e.type == SDL_KEYDOWN) {
 				const SDL_Keycode keyCode = e.key.keysym.sym;
-				if (keyCode == SDLK_SPACE) {
-					_selectedShader = (1 + _selectedShader) % 2;
-				}
 			}
 		}
 
@@ -570,7 +603,12 @@ void VulkanEngine::upload_mesh(Mesh& mesh)
 		nullptr));
 
 	_mainDeletionQueue.push_function([=]() {
-
 		vmaDestroyBuffer(_allocator, mesh._vertexBuffer._buffer, mesh._vertexBuffer._allocation);
 		});
+
+	// Need to map memory in the buffer to write to it. Unmapping the pointer lets the driver know the write is complete.
+	void* data;
+	vmaMapMemory(_allocator, mesh._vertexBuffer._allocation, &data);
+	memcpy(data, mesh._vertices.data(), mesh._vertices.size() * sizeof(Vertex));
+	vmaUnmapMemory(_allocator, mesh._vertexBuffer._allocation);
 }

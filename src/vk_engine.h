@@ -33,7 +33,6 @@ public:
 	const bool validation_enabled = true;
 	bool _isInitialized{ false };
 	int _frameNumber{ 0 };
-	int _selectedShader{ 0 };
 
 	VkExtent2D _windowExtent{ 1700, 900 };
 
